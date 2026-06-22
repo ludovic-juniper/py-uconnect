@@ -724,10 +724,23 @@ class API:
             r.raise_for_status()
             _LOGGER.debug(f"get_charge_schedules ({vin}): {r.text}")
             return r.json()
-        except requests.exceptions.HTTPError as err:
+        except Exception as err:
             # Fallback: some vehicles don't support the dedicated endpoint
             # but have schedules in the main vehicle status response
-            if err.response is not None and err.response.status_code == 500:
+            # Check if this is a 500 error from the server
+            is_500_error = False
+            if isinstance(err, requests.exceptions.HTTPError):
+                if err.response is not None and err.response.status_code == 500:
+                    is_500_error = True
+            elif isinstance(err, requests.exceptions.ConnectionError):
+                # Sometimes 500 errors are wrapped in ConnectionError
+                if hasattr(err, 'response') and err.response is not None and err.response.status_code == 500:
+                    is_500_error = True
+            elif "500 Server Error" in str(err):
+                # Fallback for other types of 500 errors
+                is_500_error = True
+            
+            if is_500_error:
                 _LOGGER.warning(
                     "Dedicated charge schedules endpoint failed for %s with HTTP 500; "
                     "falling back to vehicle status endpoint",
