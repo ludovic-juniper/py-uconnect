@@ -8,7 +8,7 @@ from requests.exceptions import HTTPError
 
 from .api import API, ChargingLevel
 from .brands import Brand
-from .command import Command, COMMANDS_BY_NAME
+from .command import Command, COMMANDS_BY_NAME, COMMAND_DEEP_REFRESH
 
 
 def convert(v: Any) -> Any:
@@ -505,6 +505,18 @@ class Client:
         """
 
         return self.api.update_location(vin)
+
+    def refresh_vehicle_data(self, vin: str) -> bool:
+        """Trigger a PIN-authenticated deep refresh and poll for completion.
+
+        This mirrors the official apps' flow where a refresh asks for the PIN,
+        the car pushes fresh data (battery/charge/odometer/...) to the cloud,
+        and the cached status is then updated. It is the only way to get fresh
+        EV/battery data on demand for vehicles that don't push it frequently.
+        Returns True when the deep refresh completed successfully.
+        """
+
+        return self.command_verify(vin, COMMAND_DEEP_REFRESH)
 
     def get_eco_coaching_last_trip(self, vin: str) -> dict:
         """Get eco-coaching data for the last trip of a vehicle with a given VIN"""

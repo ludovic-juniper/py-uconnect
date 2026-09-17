@@ -145,7 +145,29 @@ client.set_vehicle_nickname(vin, "My Car")
 
 # Trigger a fresh location update (returns correlation ID)
 correlation_id = client.update_location(vin)
+
+# Trigger a PIN-authenticated deep refresh so the car pushes fresh
+# battery/charge/odometer data to the cloud, then re-read it. This is the
+# same flow the official apps use when a refresh asks for the PIN.
+client.refresh_vehicle_data(vin)
+client.refresh()  # re-read the updated status from the cloud
 ```
+
+## PIN handling
+
+Remote actions (commands, location refresh, deep refresh, charge schedule,
+charging level) require a PIN. The library authenticates the PIN once, caches
+the resulting token, and reuses it for subsequent actions.
+
+The Stellantis backend periodically invalidates the PIN token and rejects
+the affected request with `403`/`404` — the official apps re-prompt for the
+PIN and retry in this case. The library now does the same: on a `403`/`404`
+from a PIN-authenticated action it re-authenticates the PIN and retries once,
+and if that is also rejected it forces a fresh login and retries again.
+
+To get fresh EV/battery data on demand for vehicles that don't push it
+frequently, use `refresh_vehicle_data(vin)` (the PIN-gated deep refresh),
+then `refresh()` to re-read the updated status.
 
 ## Service Delivery Platform (SDP)
 

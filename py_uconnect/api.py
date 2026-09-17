@@ -60,6 +60,7 @@ class API:
 
         self.uid: str | None = None
         self.aws_auth: AWSSigV4 | None = None
+        self.pin_auth_token: str | None = None
 
         self.sess = requests.Session()
         self.cognito_client = None
@@ -576,8 +577,9 @@ class API:
         Use get_vehicle_location() afterwards to retrieve the updated location.
         """
 
-        pin_auth = self._pin_auth()
+        return self._run_with_pin_auth(self._update_location_request, vin)
 
+    def _update_location_request(self, vin: str, pin_auth: str) -> str:
         data = {
             "command": "VF",
             "pinAuth": pin_auth,
@@ -623,7 +625,72 @@ class API:
 
         return r
 
-    def _pin_auth(self) -> str:
+    def _is_pin_reauth_error(self, err: requests.exceptions.HTTPError) -> bool:
+        """True when an HTTP error signals the PIN token must be re-issued.
+
+        The Stellantis backend returns 403 (token invalid/expired) or 404 (the
+        server hasn't accepted a PIN yet) from the PIN-authenticated endpoints.
+        The official apps re-prompt for the PIN and retry in both cases.
+        """
+
+        if err.response is None:
+            return False
+
+        return err.response.status_code in (403, 404)
+
+    def _run_with_pin_auth(self, request_fn, *args, **kwargs):
+        """Runs a PIN-authenticated request, re-authenticating on rejection.
+
+        The Stellantis backend invalidates the PIN token periodically and
+        returns 403/404 from the PIN-authenticated endpoints; the official apps
+        re-prompt for the PIN and retry. request_fn must call raise_for_status
+        on its requests.Response so HTTPError is raised on 403/404.
+        """
+
+        pin_auth = self._pin_auth()
+        kwargs["pin_auth"] = pin_auth
+
+        try:
+            return request_fn(*args, **kwargs)
+        except requests.exceptions.HTTPError as err:
+            if not self._is_pin_reauth_error(err):
+                raise
+
+            _LOGGER.warning(
+                "PIN token rejected (%s); re-authenticating and retrying",
+                err,
+            )
+            kwargs["pin_auth"] = self._pin_auth(force=True)
+            try:
+                return request_fn(*args, **kwargs)
+            except requests.exceptions.HTTPError as retry_err:
+                if not self._is_pin_reauth_error(retry_err):
+                    raise
+                kwargs["pin_auth"] = self._pin_auth(force_relogin=True)
+                return request_fn(*args, **kwargs)
+
+    def _pin_auth(self, force: bool = False, force_relogin: bool = False) -> str:
+        """Returns a PIN authentication token, authenticating if needed.
+
+        The Stellantis backend issues a short-lived token for PIN-authenticated
+        actions and periodically rejects (HTTP 403/404) requests that reuse a
+        token the server has invalidated, mirroring the official apps which
+        re-prompt for the PIN and retry. The token is cached and reused while
+        it is accepted; pass force=True to drop the cached token and
+        re-authenticate, and use force_relogin=True to also force a fresh
+        login before authenticating.
+        """
+
+        if force_relogin:
+            self.pin_auth_token = None
+            self.expire_time = None
+            self.aws_auth = None
+        elif force:
+            self.pin_auth_token = None
+
+        if not (force or force_relogin) and self.pin_auth_token is not None:
+            return self.pin_auth_token
+
         data = {
             "pin": base64.b64encode(self.pin.encode()).decode(encoding="utf-8"),
         }
@@ -640,14 +707,34 @@ class API:
             json=data,
         )
 
-        r.raise_for_status()
+        try:
+            r.raise_for_status()
+        except requests.exceptions.HTTPError as err:
+            # A 403 from /ignite/pin/authenticate usually means the underlying
+            # AWS/cognito session has gone stale; forcing a fresh login and
+            # retrying once recovers it (the official apps re-prompt for the
+            # PIN and re-auth in this case).
+            if self._is_pin_reauth_error(err) and not force_relogin:
+                _LOGGER.warning(
+                    "PIN authentication rejected (%s); re-login and retry",
+                    err,
+                )
+                return self._pin_auth(force_relogin=True)
+            raise
+
         _LOGGER.debug(f"pin auth: {r.text}")
         r = r.json()
 
         if "token" not in r:
             raise Exception(f"authentication failed: no token found: {r}")
 
-        return r["token"]
+        self.pin_auth_token = r["token"]
+        return self.pin_auth_token
+
+    def _invalidate_pin_auth(self):
+        """Drops the cached PIN token so the next action re-authenticates."""
+
+        self.pin_auth_token = None
 
     def _command_with_pin_auth(self, vin: str, cmd: Command, pin_auth: str):
         data = {
@@ -686,6 +773,21 @@ class API:
         try:
             return self._command_with_pin_auth(vin, cmd, pin_auth)
         except requests.exceptions.HTTPError as err:
+            if self._is_pin_reauth_error(err):
+                _LOGGER.warning(
+                    "PIN token rejected (%s); re-authenticating and retrying %s",
+                    err,
+                    cmd,
+                )
+                pin_auth = self._pin_auth(force=True)
+                try:
+                    return self._command_with_pin_auth(vin, cmd, pin_auth)
+                except requests.exceptions.HTTPError as retry_err:
+                    if self._is_pin_reauth_error(retry_err):
+                        pin_auth = self._pin_auth(force_relogin=True)
+                        return self._command_with_pin_auth(vin, cmd, pin_auth)
+                    raise
+
             fallback = getattr(cmd, "fallback", None)
 
             if (
@@ -767,8 +869,9 @@ class API:
         if self.dev_mode:
             return
 
-        pin_auth = self._pin_auth()
+        return self._run_with_pin_auth(self._set_charge_schedule_request, vin, schedule)
 
+    def _set_charge_schedule_request(self, vin: str, schedule: dict, pin_auth: str):
         data = schedule | {"pinAuth": pin_auth}
 
         r = self.sess.request(
@@ -799,8 +902,13 @@ class API:
         if self.dev_mode:
             return
 
-        pin_auth = self._pin_auth()
+        return self._run_with_pin_auth(
+            self._set_charging_level_request, vin, level, max_soc=max_soc
+        )
 
+    def _set_charging_level_request(
+        self, vin: str, level: ChargingLevel, max_soc: str | None = None, pin_auth: str = None
+    ):
         data = {
             "preference": level.name,
             "pinAuth": pin_auth,
