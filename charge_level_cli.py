@@ -17,10 +17,17 @@ Where:
 """
 
 import sys
+import time
+
+import requests
 
 from py_uconnect import Client
 from py_uconnect.api import CHARGING_LEVELS
 from py_uconnect.brands import BRANDS
+
+
+MAX_ATTEMPTS = 4
+RETRY_BACKOFF_SECONDS = 5
 
 
 def main():
@@ -69,18 +76,37 @@ def main():
     vehicle = list(vehicles.values())[0]
     print(f"Found vehicle: {vehicle.nickname} ({vehicle.vin})")
 
-    try:
-        print("Sending command and waiting for confirmation...")
-        success = client.set_charging_level_verify(vehicle.vin, charging_level)
-        if success:
-            print("Charging level updated successfully.")
-        else:
+    current_pref = getattr(vehicle, "charging_level_preference", None)
+    print(f"Current charging level preference: {current_pref}")
+
+    last_error = None
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        try:
+            print(f"Sending command (attempt {attempt}/{MAX_ATTEMPTS}) and waiting for confirmation...")
+            success = client.set_charging_level_verify(vehicle.vin, charging_level)
+            if success:
+                print("Charging level updated successfully.")
+                sys.exit(0)
+
             print("Charging level update did not complete successfully.")
             sys.exit(1)
 
-    except Exception as e:
-        print(f"Error setting charging level: {e}")
-        sys.exit(1)
+        except requests.exceptions.HTTPError as e:
+            last_error = e
+            status = e.response.status_code if e.response is not None else None
+            if status is not None and 500 <= status < 600 and attempt < MAX_ATTEMPTS:
+                print(f"Server returned HTTP {status}; retrying in {RETRY_BACKOFF_SECONDS}s...")
+                time.sleep(RETRY_BACKOFF_SECONDS)
+                continue
+            print(f"Error setting charging level: {e}")
+            sys.exit(1)
+
+        except Exception as e:
+            print(f"Error setting charging level: {e}")
+            sys.exit(1)
+
+    print(f"Error setting charging level after {MAX_ATTEMPTS} attempts: {last_error}")
+    sys.exit(1)
 
 
 if __name__ == '__main__':
