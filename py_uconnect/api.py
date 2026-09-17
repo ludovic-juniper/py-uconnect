@@ -794,7 +794,13 @@ class API:
     def set_charging_level(
         self, vin: str, level: ChargingLevel, max_soc: str | None = None
     ):
-        """Sets the charging level on the vehicle with a given VIN"""
+        """Sets the charging level on the vehicle with a given VIN.
+
+        The official Stellantis Cloud Capability catalog documents this endpoint
+        as ``POST /v1/accounts/vehicles/{vin}/ev/charge/preference``. The legacy
+        ``PUT /v2`` form is kept as a fallback, mirroring the fallback pattern used
+        by ``command()`` and ``get_vehicle()``.
+        """
 
         if self.dev_mode:
             return
@@ -809,22 +815,51 @@ class API:
         if max_soc is not None:
             data["maxSOC"] = max_soc
 
-        r = self.sess.request(
-            method="PUT",
-            url=self.brand.api.url
-            + f"/v2/accounts/{self.uid}/vehicles/{vin}/ev/charge/preference/",
-            headers=self._default_aws_headers(self.brand.api.key)
-            | {"content-type": "application/json"},
-            auth=self.aws_auth,
-            json=data,
-        )
+        headers = self._default_aws_headers(self.brand.api.key) | {
+            "content-type": "application/json"
+        }
 
-        r.raise_for_status()
-        _LOGGER.debug(f"set charging level ({vin} {level.name}): {r.text}")
-        r = r.json()
+        endpoints = [
+            ("POST", f"/v1/accounts/{self.uid}/vehicles/{vin}/ev/charge/preference/"),
+            ("POST", f"/v2/accounts/{self.uid}/vehicles/{vin}/ev/charge/preference/"),
+            ("PUT", f"/v2/accounts/{self.uid}/vehicles/{vin}/ev/charge/preference/"),
+        ]
 
-        if "correlationId" not in r:
-            error = r.get("debugMsg", "unknown error")
-            raise Exception(f"set charging level failed: {error} ({r})")
+        last_error: requests.exceptions.HTTPError | None = None
+        for method, path in endpoints:
+            try:
+                r = self.sess.request(
+                    method=method,
+                    url=self.brand.api.url + path,
+                    headers=headers,
+                    auth=self.aws_auth,
+                    json=data,
+                )
 
-        return r["correlationId"]
+                r.raise_for_status()
+                _LOGGER.debug(
+                    f"set charging level ({vin} {level.name} {method} {path}): {r.text}"
+                )
+                r = r.json()
+
+                if "correlationId" not in r:
+                    error = r.get("debugMsg", "unknown error")
+                    raise Exception(f"set charging level failed: {error} ({r})")
+
+                return r["correlationId"]
+            except requests.exceptions.HTTPError as err:
+                last_error = err
+                status = err.response.status_code if err.response is not None else None
+                _LOGGER.warning(
+                    "set charging level endpoint %s %s failed with HTTP %s; "
+                    "trying next variant",
+                    method,
+                    path,
+                    status,
+                )
+                continue
+
+        if last_error is not None:
+            raise last_error
+
+        raise Exception("set charging level failed: no endpoint variants were attempted")
