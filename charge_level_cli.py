@@ -6,14 +6,15 @@ Usage:
     python charge_level_cli.py USERID PWD PIN LEVEL [BRAND]
 
 Example:
-    python charge_level_cli.py your_email@example.com your_password your_pin 5 JEEP_EU
+    python charge_level_cli.py your_email@example.com your_password your_pin 5 JEEP_US
 
 Where:
     USERID - Your Uconnect account email
     PWD    - Your Uconnect account password
     PIN    - Your vehicle PIN
     LEVEL  - Charging level (1 to 5)
-    BRAND  - (Optional) Brand code, defaults to JEEP_EU
+    BRAND  - (Optional) Brand code. When omitted, the region is detected from the
+             vehicle's VIN: North American VINs use JEEP_US, others use JEEP_EU.
 """
 
 import sys
@@ -29,11 +30,22 @@ from py_uconnect.brands import BRANDS
 MAX_ATTEMPTS = 4
 RETRY_BACKOFF_SECONDS = 5
 
+# WMI (first VIN digit) -> North America. 1, 4, 5 are US WMI codes.
+NA_WMI_DIGITS = ("1", "4", "5")
+
+
+def brand_for_vin(vin: str) -> str:
+    """Pick a Jeep brand code based on the vehicle's region (VIN WMI)."""
+
+    if vin and vin[0] in NA_WMI_DIGITS:
+        return "JEEP_US"
+    return "JEEP_EU"
+
 
 def main():
     if len(sys.argv) < 5:
         print("Usage: python charge_level_cli.py USERID PWD PIN LEVEL [BRAND]")
-        print("Example: python charge_level_cli.py email@example.com password 1234 5 JEEP_EU")
+        print("Example: python charge_level_cli.py email@example.com password 1234 5 JEEP_US")
         sys.exit(1)
 
     userid = sys.argv[1]
@@ -50,20 +62,20 @@ def main():
         print(f"Error: LEVEL must be between 1 and 5, got {level}")
         sys.exit(1)
 
-    brand_name = sys.argv[5] if len(sys.argv) > 5 else "JEEP_EU"
-
-    brand = BRANDS.get(brand_name)
-    if brand is None:
-        print(f"Error: Unknown brand '{brand_name}'")
-        print(f"Available brands: {', '.join(BRANDS.keys())}")
-        sys.exit(1)
+    explicit_brand = sys.argv[5] if len(sys.argv) > 5 else None
 
     charging_level = CHARGING_LEVELS[level - 1]
 
-    print(f"Connecting as {userid} with brand {brand_name}...")
-    print(f"Setting charging level to {level} ({charging_level.name})")
+    brand_name = explicit_brand
+    if brand_name is not None:
+        if BRANDS.get(brand_name) is None:
+            print(f"Error: Unknown brand '{brand_name}'")
+            print(f"Available brands: {', '.join(BRANDS.keys())}")
+            sys.exit(1)
 
-    client = Client(userid, pwd, pin=pin, brand=brand)
+    client = Client(userid, pwd, pin=pin, brand=BRANDS[brand_name or "JEEP_US"])
+    print(f"Connecting as {userid} with brand {brand_name or 'JEEP_US'}...")
+    print(f"Setting charging level to {level} ({charging_level.name})")
 
     print("Refreshing vehicle data...")
     client.refresh()
@@ -75,6 +87,18 @@ def main():
 
     vehicle = list(vehicles.values())[0]
     print(f"Found vehicle: {vehicle.nickname} ({vehicle.vin})")
+
+    # If no brand was given, make sure we're on the region matching the VIN.
+    detected = brand_for_vin(vehicle.vin)
+    if explicit_brand is None and detected != client.api.brand.name:
+        print(f"Vehicle VIN {vehicle.vin} indicates region '{detected}'; switching brand and refreshing...")
+        client = Client(userid, pwd, pin=pin, brand=BRANDS[detected])
+        client.refresh()
+        vehicles = client.get_vehicles()
+        if not vehicles:
+            print("No vehicles found after switching region")
+            sys.exit(1)
+        vehicle = vehicles[vehicle.vin]
 
     current_pref = getattr(vehicle, "charging_level_preference", None)
     print(f"Current charging level preference: {current_pref}")
