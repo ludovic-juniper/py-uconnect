@@ -820,12 +820,11 @@ class API:
         }
 
         endpoints = [
-            ("POST", f"/v1/accounts/{self.uid}/vehicles/{vin}/ev/charge/preference/"),
-            ("POST", f"/v2/accounts/{self.uid}/vehicles/{vin}/ev/charge/preference/"),
             ("PUT", f"/v2/accounts/{self.uid}/vehicles/{vin}/ev/charge/preference/"),
         ]
 
         last_error: requests.exceptions.HTTPError | None = None
+        last_body: str | None = None
         for method, path in endpoints:
             try:
                 r = self.sess.request(
@@ -849,13 +848,15 @@ class API:
                 return r["correlationId"]
             except requests.exceptions.HTTPError as err:
                 last_error = err
+                last_body = err.response.text if err.response is not None else None
                 status = err.response.status_code if err.response is not None else None
                 _LOGGER.warning(
                     "set charging level endpoint %s %s failed with HTTP %s; "
-                    "trying next variant",
+                    "response body: %s",
                     method,
                     path,
                     status,
+                    last_body,
                 )
                 continue
 

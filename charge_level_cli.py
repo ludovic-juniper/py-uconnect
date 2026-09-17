@@ -95,11 +95,14 @@ def main():
         except requests.exceptions.HTTPError as e:
             last_error = e
             status = e.response.status_code if e.response is not None else None
+            body = e.response.text if e.response is not None else None
             if status is not None and 500 <= status < 600 and attempt < MAX_ATTEMPTS:
                 print(f"Server returned HTTP {status}; retrying in {RETRY_BACKOFF_SECONDS}s...")
                 time.sleep(RETRY_BACKOFF_SECONDS)
                 continue
             print(f"Error setting charging level: {e}")
+            if body:
+                print(f"Response body: {body}")
             sys.exit(1)
 
         except Exception as e:
