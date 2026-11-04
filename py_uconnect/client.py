@@ -8,7 +8,7 @@ from requests.exceptions import HTTPError
 
 from .api import API, ChargingLevel
 from .brands import Brand
-from .command import Command, COMMANDS_BY_NAME
+from .command import Command, COMMANDS_BY_NAME, COMMAND_DEEP_REFRESH
 
 
 def convert(v: Any) -> Any:
@@ -286,6 +286,18 @@ class Client:
 
     def set_pin(self, pin: str):
         self.api.set_pin(pin)
+
+    def force_refresh(self, vin: str) -> bool:
+        """Asks the server to fetch fresh data from the vehicle (DEEPREFRESH).
+
+        The status endpoints only return cached server-side data. Sending the
+        DEEPREFRESH command (which requires PIN auth) forces the API server to
+        poll the vehicle before the data is read again with refresh().
+
+        Returns True if the deep refresh completed successfully.
+        """
+
+        return self.command_verify(vin, COMMAND_DEEP_REFRESH)
 
     def refresh(self):
         """Refreshes all the vehicle data and caches it locally"""
