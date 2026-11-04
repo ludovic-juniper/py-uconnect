@@ -8,7 +8,12 @@ from requests.exceptions import HTTPError
 
 from .api import API, ChargingLevel
 from .brands import Brand
-from .command import Command, COMMANDS_BY_NAME, COMMAND_DEEP_REFRESH
+from .command import (
+    Command,
+    COMMANDS_BY_NAME,
+    COMMAND_DEEP_REFRESH,
+    COMMAND_DEEP_REFRESH_V2,
+)
 
 
 def convert(v: Any) -> Any:
@@ -294,10 +299,23 @@ class Client:
         DEEPREFRESH command (which requires PIN auth) forces the API server to
         poll the vehicle before the data is read again with refresh().
 
+        Uses the DEEPREFRESH2 variant for vehicles that list it in their
+        supported commands. Note that the API server rejects deep refreshes
+        while the vehicle is not plugged in (HTTP 403).
+
         Returns True if the deep refresh completed successfully.
         """
 
-        return self.command_verify(vin, COMMAND_DEEP_REFRESH)
+        vehicle = self.vehicles.get(vin)
+        supported = vehicle.supported_commands if vehicle is not None else []
+
+        cmd = (
+            COMMAND_DEEP_REFRESH_V2
+            if "DEEPREFRESH2" in supported
+            else COMMAND_DEEP_REFRESH
+        )
+
+        return self.command_verify(vin, cmd)
 
     def refresh(self):
         """Refreshes all the vehicle data and caches it locally"""

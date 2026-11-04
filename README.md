@@ -129,6 +129,9 @@ python cli.py FIAT_EU 'foo@bar.com' 'very_secret' '1234'
 # refresh() only reads data cached server-side; force_refresh() uses the PIN
 # to ask the server to poll the vehicle. Call refresh() afterwards to read
 # the updated data.
+# Note: the API server rejects deep refreshes while the vehicle is not
+# plugged in (HTTP 403: "Deep refresh not allowed if the vehicle is not
+# plugged-in").
 client.force_refresh(vin)
 client.refresh()
 

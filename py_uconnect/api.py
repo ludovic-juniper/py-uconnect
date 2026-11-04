@@ -700,6 +700,18 @@ class API:
                 )
                 return self._command_with_pin_auth(vin, fallback, pin_auth)
 
+            if err.response is not None:
+                try:
+                    body = err.response.json()
+                    debug_msg = body.get("debugMsg") or body.get("message")
+                    if debug_msg:
+                        raise Exception(
+                            f"{cmd} command failed with HTTP "
+                            f"{err.response.status_code}: {debug_msg}"
+                        ) from err
+                except ValueError:
+                    pass
+
             raise
 
     def get_charge_schedules(self, vin: str) -> dict:

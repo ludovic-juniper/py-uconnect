@@ -34,11 +34,7 @@ COMMAND_CABIN_VENTILATION = Command(name="ACV", api_version="v2")
 COMMAND_HVAC_TARGET_TEMP = Command(name="ROHVACTMP", api_version="v2")
 
 COMMAND_DEEP_REFRESH_V2 = Command(name="DEEPREFRESH2", url="ev", api_version="v2")
-COMMAND_DEEP_REFRESH = Command(
-    name="DEEPREFRESH",
-    url="ev",
-    fallback=COMMAND_DEEP_REFRESH_V2,
-)
+COMMAND_DEEP_REFRESH = Command(name="DEEPREFRESH", url="ev")
 
 COMMAND_CHARGE_V4 = Command(
     name="START_CHARGE",
