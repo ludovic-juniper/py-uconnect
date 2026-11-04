@@ -111,9 +111,27 @@ This would emit something similar to:
 }
 ```
 
+## Command line usage
+
+```bash
+# Read cached vehicle data
+python cli.py FIAT_EU 'foo@bar.com' 'very_secret'
+
+# With a PIN: sends a DEEPREFRESH command (PIN-authenticated) to force the
+# server to fetch fresh data from the vehicle before reading it
+python cli.py FIAT_EU 'foo@bar.com' 'very_secret' '1234'
+```
+
 ## Additional API methods
 
 ```python
+# Force a fresh vehicle data update on the API server (DEEPREFRESH).
+# refresh() only reads data cached server-side; force_refresh() uses the PIN
+# to ask the server to poll the vehicle. Call refresh() afterwards to read
+# the updated data.
+client.force_refresh(vin)
+client.refresh()
+
 # Vehicle health report
 report = client.get_vehicle_health_report(vin)
 
